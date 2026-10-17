@@ -1715,9 +1715,10 @@ func claudeIn(at place) *Agent {
 				main, tiers := curTiers()
 				// its effort, if it has one, goes with it to the new model
 				_, e := tierAt(tiers[tier])
-				// the main model picked where the tier would follow another
-				// is the user's own; any other model is by itself
-				if v != "" && strings.TrimSuffix(v, "[1m]") == strings.TrimSuffix(main, "[1m]") && follow(tier, main) != main {
+				// a model picked by hand is the user's own, the main
+				// model itself included: only emptying the tier asks it
+				// to follow the main model again (#2654)
+				if v != "" {
 					stash(map[string]string{ownKey(tier): "1"})
 				} else {
 					forget(ownKey(tier))

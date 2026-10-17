@@ -243,3 +243,84 @@ func TestClaudeOwnTierOnTheNewMainModelStays(t *testing.T) {
 		}
 	}
 }
+
+// A tier picked by hand is the user's own even when the model picked is
+// the main model itself: emptying the tier is how the user asks it to
+// follow again. Before, a tier whose follow is the main model (opus and
+// sonnet always, haiku on a main that is no Claude model) took no own
+// mark when given the main model, read as "Same as main model", and the
+// next move of the main model carried the pick off (#2654).
+func TestClaudeTierPickedAsTheMainModelStays(t *testing.T) {
+	for _, tier := range claudeTiers {
+		for _, via := range []string{"magpie", "/model"} {
+			t.Run(tier+"/"+via, func(t *testing.T) {
+				home, _ := codexHome(t, "", "")
+				a := claude(home)
+				if err := provider.Save(provider.Provider{ID: "anth", Name: "Anthropic", Chat: "https://api.anthropic.com/v1", Key: "k",
+					Models: []string{"claude-opus-5-5", "claude-haiku-4-5"}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := provider.Save(provider.Provider{ID: "oa", Name: "OA", Chat: "https://oa.example/v1", Key: "k",
+					Models: []string{"k2.8-preview", "glm-6"}}); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(home, ".claude", "settings.json")
+				bare := func(s string) string { return strings.TrimSuffix(s, "[1m]") }
+				main := func(m string) {
+					t.Helper()
+					if via == "magpie" {
+						if err := a.Apply("model", m); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if err := edit.SetJSON(path, edit.KV{Path: "model", Value: m}); err != nil {
+							t.Fatal(err)
+						}
+						if err := a.Follow(); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				const picked = "oa/k2.8-preview"
+				if err := a.Apply("model", picked); err != nil {
+					t.Fatal(err)
+				}
+				// the user picks the main model itself for the tier
+				if err := a.Apply(tier, picked); err != nil {
+					t.Fatal(err)
+				}
+				if own := stashLoad()[place{}.key("claude.tier_own."+tier)]; own == "" {
+					t.Fatalf("picking %s as the %s tier left it following the main model", picked, tier)
+				}
+				if v := a.Values(); bare(v[tier]) != picked {
+					t.Fatalf("the %s tier picked as %s reads %q", tier, picked, v[tier])
+				}
+				// the main model moves on: the picked tier keeps its model
+				main("oa/glm-6")
+				if m, _ := edit.GetJSON(path, "env."+tierEnv(tier)); bare(m) != picked {
+					t.Fatalf("main model moved on: %s is %q, not the picked %s\n%s", tier, m, picked, readFile(path))
+				}
+				if v := a.Values(); bare(v[tier]) != picked {
+					t.Fatalf("main model moved on: %s reads %q, not the picked %s", tier, v[tier], picked)
+				}
+				// emptying it asks the tier to follow the main model again
+				if err := a.Apply(tier, ""); err != nil {
+					t.Fatal(err)
+				}
+				if own := stashLoad()[place{}.key("claude.tier_own."+tier)]; own != "" {
+					t.Fatalf("emptying the %s tier kept its own model", tier)
+				}
+				want := "oa/glm-6"
+				if tier == "fable" {
+					want = "" // fable follows no model that is no Fable
+				}
+				if m, _ := edit.GetJSON(path, "env."+tierEnv(tier)); bare(m) != want {
+					t.Fatalf("emptying the %s tier: %q, not %q\n%s", tier, m, want, readFile(path))
+				}
+				if v := a.Values(); v[tier] != "" {
+					t.Fatalf("emptying the %s tier still reads %q", tier, v[tier])
+				}
+			})
+		}
+	}
+}
